@@ -111,6 +111,11 @@ def build_claude_argv(cell_id: str, scenario: dict, workdir: Path) -> list[str]:
         "-p",
         scenario["task"],
         "--system-prompt", BASE_SYSTEM_PROMPT,
+        # --system-prompt only replaces the system prompt string. CLAUDE.md loads
+        # via a separate "project context" mechanism controlled by --setting-sources.
+        # Empty value suppresses both user-level (~/.claude/CLAUDE.md) and project-level
+        # CLAUDE.md auto-discovery, while preserving OAuth auth (unlike --bare).
+        "--setting-sources", "",
         "--permission-mode", cell["permission_mode"],
         "--output-format", "stream-json",
         "--verbose",

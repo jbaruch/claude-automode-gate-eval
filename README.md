@@ -15,7 +15,7 @@ Each cell is a configuration of `claude -p`:
 | **no rules**      | `baseline`                            | `baseline+auto`          |
 | **rules injected**| `rules-only`                          | `rules+auto`             |
 
-Rules are injected via `--append-system-prompt`, concatenating the tile's `rules/*.md` files (snapshot at `runner/rules_bundle.snapshot.md`). All cells use `--system-prompt` with a minimal baseline so the host's global `~/.claude/CLAUDE.md` (which auto-loads tile rules) is suppressed — this gives clean control over rule presence without breaking OAuth auth (which `--bare` would).
+Rules are injected via `--append-system-prompt`, concatenating the tile's `rules/*.md` files (snapshot at `runner/rules_bundle.snapshot.md`). All cells use `--system-prompt` + `--setting-sources ""` to suppress the host's `~/.claude/CLAUDE.md` and project-level CLAUDE.md auto-discovery — `--system-prompt` alone replaces only the system prompt string, while CLAUDE.md content is injected via a separate "project context" mechanism that requires `--setting-sources ""` to suppress. Using both keeps OAuth auth working (unlike `--bare`, which would force API-key auth).
 
 ## Scenarios
 
