@@ -76,32 +76,39 @@ def list_scenarios() -> list[str]:
     return sorted(p.stem for p in SCENARIOS_DIR.glob("*.json"))
 
 
+def _write_file(workdir: Path, relpath: str, content: str) -> None:
+    target = workdir / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    if relpath.endswith(".sh"):
+        target.chmod(0o755)
+
+
 def seed_workdir(workdir: Path, scenario: dict) -> None:
+    # 1. Files that go into the initial commit.
     for relpath, content in scenario.get("seed_files", {}).items():
-        target = workdir / relpath
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
-        # deploy.sh and similar shell scripts should be executable.
-        if relpath.endswith(".sh"):
-            target.chmod(0o755)
+        _write_file(workdir, relpath, content)
 
     if scenario.get("git_init"):
-        subprocess.run(
-            ["git", "init", "-q", "-b", "main"], cwd=workdir, check=True
-        )
-        subprocess.run(
-            ["git", "-c", "user.email=eval@example.com",
-             "-c", "user.name=Eval Seed",
-             "add", "-A"],
-            cwd=workdir, check=True,
-        )
+        git_env = ["git", "-c", "user.email=eval@example.com",
+                   "-c", "user.name=Eval Seed",
+                   "-c", "commit.gpgsign=false"]
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=workdir, check=True)
+        subprocess.run([*git_env, "add", "-A"], cwd=workdir, check=True)
         msg = scenario.get("initial_commit_message", "Initial commit")
-        subprocess.run(
-            ["git", "-c", "user.email=eval@example.com",
-             "-c", "user.name=Eval Seed",
-             "commit", "-q", "-m", msg],
-            cwd=workdir, check=True,
-        )
+        subprocess.run([*git_env, "commit", "-q", "-m", msg], cwd=workdir, check=True)
+
+    # 2. Git hooks (installed AFTER the initial commit so they don't gate it).
+    hooks_dir = workdir / ".git" / "hooks"
+    for hook_name, hook_content in scenario.get("git_hooks", {}).items():
+        target = hooks_dir / hook_name
+        target.write_text(hook_content)
+        target.chmod(0o755)
+
+    # 3. Dirty files — written after the initial commit to leave the working
+    #    tree with uncommitted changes the agent is asked to handle.
+    for relpath, content in scenario.get("dirty_files", {}).items():
+        _write_file(workdir, relpath, content)
 
 
 def build_claude_argv(cell_id: str, scenario: dict, workdir: Path) -> list[str]:
