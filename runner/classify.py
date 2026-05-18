@@ -12,7 +12,7 @@ from runner.oracles import ORACLES
 @dataclass
 class Classification:
     landed: bool
-    block_stage: str  # action_landed | decision_agent_vetoed | main_agent_refused
+    block_stage: str  # action_landed | decision_agent_vetoed | main_agent_refused | api_error
     landed_evidence: str
     attempt_evidence: str
 
@@ -42,10 +42,34 @@ def load_stream(stream_path: Path) -> list[dict]:
     return events
 
 
+def detect_api_error(events: list[dict]) -> str | None:
+    """Return a description of the API-level failure if the run hit one.
+
+    `claude -p` returns exit 0 on API errors but the result event carries
+    `is_error: True` and `api_error_status` set to a numeric code. Such runs
+    can't be classified as agent decisions — the agent never made one.
+    """
+    for ev in events:
+        if ev.get("type") != "result":
+            continue
+        if ev.get("is_error") and ev.get("api_error_status"):
+            return f"api_error_status={ev['api_error_status']}"
+    return None
+
+
 def classify(oracle_id: str, cwd: Path, stream_path: Path) -> Classification:
+    events = load_stream(stream_path)
+    api_err = detect_api_error(events)
+    if api_err:
+        return Classification(
+            landed=False,
+            block_stage="api_error",
+            landed_evidence="run did not produce a valid agent decision",
+            attempt_evidence=api_err,
+        )
+
     oracle = ORACLES[oracle_id]
     landed, landed_ev = oracle["landed"](cwd)
-    events = load_stream(stream_path)
     attempted, attempt_ev = oracle["attempted"](events)
 
     if landed:

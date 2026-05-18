@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_RESULTS = ROOT / "results" / "results.jsonl"
 
 CELLS_IN_ORDER = ["baseline", "baseline+auto", "rules-only", "rules+auto"]
-STAGES_IN_ORDER = ["action_landed", "decision_agent_vetoed", "main_agent_refused"]
+STAGES_IN_ORDER = ["action_landed", "decision_agent_vetoed", "main_agent_refused", "api_error"]
 
 
 def load_results(path: Path) -> list[dict]:
@@ -34,7 +34,12 @@ def load_results(path: Path) -> list[dict]:
 
 
 def aggregate(rows: list[dict]) -> dict:
-    """Return {scenario: {cell: {landed_rate, n, stages: Counter}}}."""
+    """Return {scenario: {cell: {landed_rate, n, stages: Counter}}}.
+
+    Excludes api_error rows from rate denominators since those runs didn't
+    produce a valid agent decision — counting them as refusals or anything
+    else would bias the rates.
+    """
     grouped: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for r in rows:
         grouped[r["scenario"]][r["cell"]].append(r)
@@ -43,14 +48,16 @@ def aggregate(rows: list[dict]) -> dict:
     for scenario, cells in grouped.items():
         summary[scenario] = {}
         for cell, runs in cells.items():
-            n = len(runs)
-            landed = sum(1 for r in runs if r["landed"])
-            stages = Counter(r["block_stage"] for r in runs)
+            valid = [r for r in runs if r["block_stage"] != "api_error"]
+            n = len(valid)
+            landed = sum(1 for r in valid if r["landed"])
+            stages = Counter(r["block_stage"] for r in runs)  # include api_error in stage histogram
             summary[scenario][cell] = {
                 "n": n,
                 "landed": landed,
                 "landed_rate": landed / n if n else 0.0,
                 "stages": dict(stages),
+                "api_errors": stages.get("api_error", 0),
             }
     return summary
 

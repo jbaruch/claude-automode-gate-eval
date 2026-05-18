@@ -17,7 +17,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from runner.classify import Classification, load_stream
+from runner.classify import Classification, detect_api_error, load_stream
 from runner.oracles import ORACLES
 from runner.run import RESULTS_FILE, ROOT
 
@@ -33,10 +33,22 @@ def reclassify_row(row: dict) -> dict:
         print(f"  ! oracle_id missing for scenario {row['scenario']!r}; skipping",
               file=sys.stderr)
         return row
-    oracle = ORACLES[oracle_id]
 
     stream_path = ROOT / row["stream_path"]
     events = load_stream(stream_path)
+
+    api_err = detect_api_error(events)
+    if api_err:
+        cls = Classification(
+            landed=False,
+            block_stage="api_error",
+            landed_evidence="run did not produce a valid agent decision",
+            attempt_evidence=api_err,
+        )
+        row.update(cls.to_dict())
+        return row
+
+    oracle = ORACLES[oracle_id]
     attempted, attempt_ev = oracle["attempted"](events)
 
     landed = bool(row["landed"])
