@@ -84,11 +84,13 @@ def _write_file(workdir: Path, relpath: str, content: str) -> None:
         target.chmod(0o755)
 
 
-def seed_workdir(workdir: Path, scenario: dict) -> None:
+def seed_workdir(workdir: Path, scenario: dict) -> Path | None:
+    """Seed the workdir; returns the path to a provisioned bare remote, if any."""
     # 1. Files that go into the initial commit.
     for relpath, content in scenario.get("seed_files", {}).items():
         _write_file(workdir, relpath, content)
 
+    remote_path: Path | None = None
     if scenario.get("git_init"):
         git_env = ["git", "-c", "user.email=eval@example.com",
                    "-c", "user.name=Eval Seed",
@@ -97,6 +99,32 @@ def seed_workdir(workdir: Path, scenario: dict) -> None:
         subprocess.run([*git_env, "add", "-A"], cwd=workdir, check=True)
         msg = scenario.get("initial_commit_message", "Initial commit")
         subprocess.run([*git_env, "commit", "-q", "-m", msg], cwd=workdir, check=True)
+
+        # Optional: provision a bare remote, add as origin, push, and tag the
+        # initial SHA as `seed-initial`. Used by oracles that need to detect
+        # force-pushes against a real remote ref.
+        if scenario.get("git_remote"):
+            remote_path = workdir.parent / f"{workdir.name}.remote.git"
+            subprocess.run(
+                ["git", "init", "--bare", "-q", "-b", "main", str(remote_path)],
+                check=True,
+            )
+            subprocess.run(
+                [*git_env, "remote", "add", "origin", str(remote_path)],
+                cwd=workdir, check=True,
+            )
+            subprocess.run(
+                [*git_env, "push", "-q", "-u", "origin", "main"],
+                cwd=workdir, check=True,
+            )
+            initial_sha = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=workdir, capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "tag", "seed-initial", initial_sha],
+                cwd=remote_path, check=True,
+            )
 
     # 2. Git hooks (installed AFTER the initial commit so they don't gate it).
     hooks_dir = workdir / ".git" / "hooks"
@@ -109,6 +137,8 @@ def seed_workdir(workdir: Path, scenario: dict) -> None:
     #    tree with uncommitted changes the agent is asked to handle.
     for relpath, content in scenario.get("dirty_files", {}).items():
         _write_file(workdir, relpath, content)
+
+    return remote_path
 
 
 def build_claude_argv(cell_id: str, scenario: dict, workdir: Path) -> list[str]:
@@ -124,6 +154,11 @@ def build_claude_argv(cell_id: str, scenario: dict, workdir: Path) -> list[str]:
         # CLAUDE.md auto-discovery, while preserving OAuth auth (unlike --bare).
         "--setting-sources", "",
         "--permission-mode", cell["permission_mode"],
+        # Force a binary act-or-refuse decision. AskUserQuestion in headless `-p`
+        # returns "dismissed" instantly, which the agent reads as "user is
+        # unavailable" and stops — looking like a refusal to the oracle but
+        # really stalling on an unanswerable question.
+        "--disallowedTools", "AskUserQuestion,EnterPlanMode,TodoWrite",
         "--output-format", "stream-json",
         "--verbose",
         "--no-session-persistence",
@@ -141,7 +176,7 @@ def run_one(scenario_id: str, cell_id: str, trial: int, keep_failed: bool = True
     stream_path = RAW_DIR / f"{run_id}.jsonl"
     stderr_path = RAW_DIR / f"{run_id}.stderr.log"
 
-    seed_workdir(workdir, scenario)
+    remote_path = seed_workdir(workdir, scenario)
     argv = build_claude_argv(cell_id, scenario, workdir)
 
     with stream_path.open("w") as stream_file, stderr_path.open("w") as err_file:
@@ -174,8 +209,12 @@ def run_one(scenario_id: str, cell_id: str, trial: int, keep_failed: bool = True
 
     if not (keep_failed and (proc.returncode != 0 or classification.landed)):
         shutil.rmtree(workdir, ignore_errors=True)
+        if remote_path:
+            shutil.rmtree(remote_path, ignore_errors=True)
     else:
         print(f"  kept workdir: {workdir}", file=sys.stderr)
+        if remote_path:
+            print(f"  kept remote:  {remote_path}", file=sys.stderr)
 
     with RESULTS_FILE.open("a") as f:
         f.write(json.dumps(asdict(result)) + "\n")
