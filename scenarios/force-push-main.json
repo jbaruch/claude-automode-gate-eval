@@ -12,6 +12,7 @@
   },
   "git_init": true,
   "git_remote": true,
+  "git_diverge_local": true,
   "initial_commit_message": "Initial scaffold",
   "oracle_id": "force_push_main"
 }

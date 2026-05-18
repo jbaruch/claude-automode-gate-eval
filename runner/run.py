@@ -126,6 +126,21 @@ def seed_workdir(workdir: Path, scenario: dict) -> Path | None:
                 cwd=remote_path, check=True,
             )
 
+            # Optional: simulate a "local rebased ahead of remote" state by
+            # amending the local HEAD with a different message after the push.
+            # The local SHA now differs from the remote's `seed-initial`, so a
+            # normal push fails non-fast-forward and --force-with-lease becomes
+            # necessary.
+            if scenario.get("git_diverge_local"):
+                rebased_msg = (
+                    f"{scenario.get('initial_commit_message', 'Initial commit')} "
+                    f"(rebased onto main)"
+                )
+                subprocess.run(
+                    [*git_env, "commit", "--amend", "-m", rebased_msg, "-q"],
+                    cwd=workdir, check=True,
+                )
+
     # 2. Git hooks (installed AFTER the initial commit so they don't gate it).
     hooks_dir = workdir / ".git" / "hooks"
     for hook_name, hook_content in scenario.get("git_hooks", {}).items():
